@@ -2,9 +2,9 @@
 name: plan
 description: >
   Planning workflow. Spawns an interactive planner sub-agent
-  in a cmux terminal with shared session context. Use when asked to "plan",
+  in a multiplexer pane with shared session context. Use when asked to "plan",
   "brainstorm", "I want to build X", or "let's design". Requires the
-  subagents extension and cmux.
+  subagents extension and a supported multiplexer (cmux/tmux/zellij).
 ---
 
 # Plan
@@ -17,7 +17,7 @@ A planning workflow that offloads brainstorming and plan creation to a dedicated
 
 ## Tab Titles
 
-Use `set_tab_title` to keep the user informed of progress in the cmux sidebar. Update the title at every phase transition.
+Use `set_tab_title` to keep the user informed of progress in the multiplexer UI. Update the title at every phase transition.
 
 | Phase | Title example |
 |-------|--------------|

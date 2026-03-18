@@ -1,12 +1,12 @@
 # pi-interactive-subagents
 
-Interactive subagents for [pi](https://github.com/badlogic/pi-mono) — spawn, orchestrate, and manage sub-agent sessions in [cmux](https://github.com/manaflow-ai/cmux) terminals.
+Interactive subagents for [pi](https://github.com/badlogic/pi-mono) - spawn, orchestrate, and manage sub-agent sessions in multiplexer panes.
 
 
 https://github.com/user-attachments/assets/c2dafe55-e4a6-4bcc-afac-273e3f05bdca
 
 
-This package gives pi the ability to delegate work to specialized sub-agents that run in their own terminal sessions. A main orchestrator session spawns scouts, planners, workers, and reviewers — each visible in a side-by-side cmux split. The user can watch progress in real-time, interact with interactive agents, and get summaries when autonomous agents finish.
+This package gives pi the ability to delegate work to specialized sub-agents that run in their own terminal sessions. A main orchestrator session spawns scouts, planners, workers, and reviewers, each visible in a side-by-side split. The user can watch progress in real-time, interact with interactive agents, and get summaries when autonomous agents finish.
 
 ## Install
 
@@ -14,20 +14,35 @@ This package gives pi the ability to delegate work to specialized sub-agents tha
 pi install git:github.com/HazAT/pi-interactive-subagents
 ```
 
-> **Requires [cmux](https://github.com/manaflow-ai/cmux).** Start pi inside cmux for subagent support: `cmux pi`
+Supported multiplexers:
+- [cmux](https://github.com/manaflow-ai/cmux)
+- [tmux](https://github.com/tmux/tmux)
+- [zellij](https://zellij.dev)
+
+Start pi inside one of them:
+
+```bash
+cmux pi
+# or
+tmux new -A -s pi 'pi'
+# or
+zellij --session pi   # then run: pi
+```
+
+Optional: set `PI_SUBAGENT_MUX=cmux|tmux|zellij` to force a specific backend.
 
 ## What's Included
 
 ### Extensions
 
-**Subagents** — 5 tools + 3 commands for spawning and managing sub-agents:
+**Subagents** - 5 tools + 3 commands for spawning and managing sub-agents:
 
 | Tool | Description |
 |------|-------------|
-| `subagent` | Spawn a sub-agent in a dedicated cmux terminal |
+| `subagent` | Spawn a sub-agent in a dedicated multiplexer pane |
 | `parallel_subagents` | Run multiple autonomous sub-agents concurrently with tiled layout |
 | `subagents_list` | List available agent definitions |
-| `set_tab_title` | Update cmux tab title to show progress |
+| `set_tab_title` | Update tab/window title to show progress |
 | `subagent_resume` | Resume a previous sub-agent session |
 
 | Command | Description |
@@ -105,7 +120,7 @@ The `/plan` command orchestrates a full planning-to-implementation pipeline. It'
 
 **Phase 5** — A reviewer examines all changes, producing a prioritized report. P0/P1 issues get fixed immediately by additional workers. P2/P3 items are noted or skipped.
 
-Throughout the workflow, cmux tab titles update to show current phase:
+Throughout the workflow, tab/window titles update to show current phase:
 
 ```
 🔍 Investigating: dark mode    →    💬 Planning: dark mode
@@ -157,7 +172,7 @@ subagent({
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `name` | string | required | Display name (shown in cmux tab) |
+| `name` | string | required | Display name (shown in pane title/tab) |
 | `task` | string | required | Task prompt for the sub-agent |
 | `agent` | string | — | Load defaults from agent definition |
 | `interactive` | boolean | `true` | User collaborates vs. autonomous |
@@ -171,7 +186,7 @@ subagent({
 
 ## Parallel Subagents
 
-The `parallel_subagents` tool runs multiple autonomous sub-agents concurrently with a single tool call. Each agent gets its own cmux terminal in a tiled layout, and progress updates stream in as each agent completes.
+The `parallel_subagents` tool runs multiple autonomous sub-agents concurrently with a single tool call. Each agent gets its own pane in a tiled layout, and progress updates stream in as each agent completes.
 
 ```typescript
 parallel_subagents({
@@ -245,13 +260,26 @@ The frontmatter configures the agent defaults. The body becomes the system promp
 
 ## Requirements
 
-- [pi](https://github.com/badlogic/pi-mono) — the coding agent
-- [cmux](https://github.com/manaflow-ai/cmux) — terminal multiplexer for side-by-side splits
+- [pi](https://github.com/badlogic/pi-mono) - the coding agent
+- One supported multiplexer:
+  - [cmux](https://github.com/manaflow-ai/cmux)
+  - [tmux](https://github.com/tmux/tmux)
+  - [zellij](https://zellij.dev)
 
-Start pi inside cmux:
+Start pi inside one of them:
 
 ```bash
 cmux pi
+# or
+tmux new -A -s pi 'pi'
+# or
+zellij --session pi   # then run: pi
+```
+
+Optional backend override:
+
+```bash
+export PI_SUBAGENT_MUX=cmux   # or tmux, zellij
 ```
 
 ## License

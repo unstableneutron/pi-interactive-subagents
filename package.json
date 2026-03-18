@@ -2,7 +2,7 @@
   "name": "pi-interactive-subagents",
   "version": "0.1.0",
   "type": "module",
-  "description": "Interactive subagents for pi — spawn, orchestrate, and manage sub-agent sessions in cmux terminals",
+  "description": "Interactive subagents for pi - spawn, orchestrate, and manage sub-agent sessions in cmux/tmux/zellij terminals",
   "keywords": ["pi-package"],
   "pi": {
     "extensions": [

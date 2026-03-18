@@ -6,7 +6,8 @@ import { basename, dirname, join } from "node:path";
 import { readdirSync, statSync, readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import {
-  isCmuxAvailable,
+  isMuxAvailable,
+  muxSetupHint,
   createSurface,
   createSurfaceSplit,
   sendCommand,
@@ -104,6 +105,20 @@ function formatElapsed(seconds: number): string {
   return `${m}m ${s}s`;
 }
 
+function muxUnavailableResult(kind: "subagents" | "tab-title" = "subagents") {
+  if (kind === "tab-title") {
+    return {
+      content: [{ type: "text" as const, text: `Terminal multiplexer not available. ${muxSetupHint()}` }],
+      details: { error: "mux not available" },
+    };
+  }
+
+  return {
+    content: [{ type: "text" as const, text: `Subagents require a supported terminal multiplexer. ${muxSetupHint()}` }],
+    details: { error: "mux not available" },
+  };
+}
+
 /**
  * Build the artifact directory path for the current session.
  * Same convention as the write_artifact tool:
@@ -181,7 +196,7 @@ interface SubagentResult {
 }
 
 /**
- * Core subagent execution logic. Spawns a sub-agent in a cmux terminal,
+ * Core subagent execution logic. Spawns a sub-agent in a multiplexer pane,
  * polls for completion, extracts the summary, and returns a structured result.
  *
  * Used by both `subagent` (single) and `parallel_subagents` (concurrent) tools.
@@ -378,20 +393,17 @@ export default function subagentsExtension(pi: ExtensionAPI) {
     name: "subagent",
     label: "Subagent",
     description:
-      "Spawn a sub-agent in a dedicated cmux terminal with shared session context. " +
+      "Spawn a sub-agent in a dedicated terminal multiplexer pane with shared session context. " +
       "The sub-agent branches from the current session, works independently (interactive or autonomous), " +
-      "and returns results via a branch summary. Requires cmux to be running (CMUX_SOCKET_PATH must be set).",
+      "and returns results via a branch summary. Supports cmux, tmux, and zellij.",
     parameters: SubagentParams,
 
     async execute(_toolCallId, params, signal, onUpdate, ctx) {
       const interactive = params.interactive !== false;
 
       // Validate prerequisites
-      if (!isCmuxAvailable()) {
-        return {
-          content: [{ type: "text", text: "Subagents require cmux. Start pi inside cmux (`cmux pi`) to use interactive subagents." }],
-          details: { error: "cmux not available" },
-        };
+      if (!isMuxAvailable()) {
+        return muxUnavailableResult("subagents");
       }
 
       if (!ctx.sessionManager.getSessionFile()) {
@@ -588,8 +600,8 @@ export default function subagentsExtension(pi: ExtensionAPI) {
     name: "parallel_subagents",
     label: "Parallel Subagents",
     description:
-      "Run multiple autonomous sub-agents concurrently. Each agent spawns in its own cmux terminal " +
-      "and runs independently. Results stream in as each agent completes — you don't have to wait for all of them. " +
+      "Run multiple autonomous sub-agents concurrently. Each agent spawns in its own multiplexer pane " +
+      "and runs independently. Results stream in as each agent completes so you do not have to wait for all of them. " +
       "Use for independent tasks like scouting different parts of a codebase, parallel research, or non-overlapping work.",
     parameters: Type.Object({
       agents: Type.Array(ParallelSubagentEntry, {
@@ -599,11 +611,8 @@ export default function subagentsExtension(pi: ExtensionAPI) {
     }),
 
     async execute(_toolCallId, params, signal, onUpdate, ctx) {
-      if (!isCmuxAvailable()) {
-        return {
-          content: [{ type: "text", text: "Subagents require cmux. Start pi inside cmux (`cmux pi`) to use interactive subagents." }],
-          details: { error: "cmux not available" },
-        };
+      if (!isMuxAvailable()) {
+        return muxUnavailableResult("subagents");
       }
 
       if (!ctx.sessionManager.getSessionFile()) {
@@ -893,23 +902,20 @@ export default function subagentsExtension(pi: ExtensionAPI) {
     },
   });
 
-  // set_tab_title tool — update the current cmux tab title and workspace
+  // set_tab_title tool — update the current tab/window title and workspace/session
   pi.registerTool({
     name: "set_tab_title",
     label: "Set Tab Title",
     description:
-      "Update the current cmux tab and workspace title. Use to show progress during multi-phase workflows " +
+      "Update the current tab/window and workspace/session title. Use to show progress during multi-phase workflows " +
       "(e.g. planning, executing todos, reviewing). Keep titles short and informative.",
     parameters: Type.Object({
-      title: Type.String({ description: "New tab title (also applied to the workspace sidebar)" }),
+      title: Type.String({ description: "New tab title (also applied to workspace/session when supported)" }),
     }),
 
     async execute(_toolCallId, params) {
-      if (!isCmuxAvailable()) {
-        return {
-          content: [{ type: "text", text: "cmux not available — start pi inside cmux (`cmux pi`) to set tab titles." }],
-          details: { error: "cmux not available" },
-        };
+      if (!isMuxAvailable()) {
+        return muxUnavailableResult("tab-title");
       }
       try {
         renameCurrentTab(params.title);
@@ -932,7 +938,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
     name: "subagent_resume",
     label: "Resume Subagent",
     description:
-      "Resume a previous sub-agent session in a new cmux terminal. " +
+      "Resume a previous sub-agent session in a new multiplexer pane. " +
       "Opens an interactive session from the given session file path. " +
       "Use when a sub-agent was cancelled or needs follow-up work.",
     parameters: Type.Object({
@@ -1000,11 +1006,8 @@ export default function subagentsExtension(pi: ExtensionAPI) {
       const name = params.name ?? "Resume";
       const startTime = Date.now();
 
-      if (!isCmuxAvailable()) {
-        return {
-          content: [{ type: "text", text: "Subagents require cmux. Start pi inside cmux (`cmux pi`) to use interactive subagents." }],
-          details: { error: "cmux not available" },
-        };
+      if (!isMuxAvailable()) {
+        return muxUnavailableResult("subagents");
       }
 
       if (!existsSync(params.sessionPath)) {
@@ -1157,13 +1160,13 @@ export default function subagentsExtension(pi: ExtensionAPI) {
       }
 
       // Rename workspace and tab to show this is a planning session
-      if (isCmuxAvailable()) {
+      if (isMuxAvailable()) {
         try {
-          const label = task.length > 40 ? task.slice(0, 40) + "…" : task;
+          const label = task.length > 40 ? task.slice(0, 40) + "..." : task;
           renameWorkspace(`🎯 ${label}`);
           renameCurrentTab(`🎯 Plan: ${label}`);
         } catch {
-          // non-critical — don't block the plan
+          // non-critical -- do not block the plan
         }
       }
 
