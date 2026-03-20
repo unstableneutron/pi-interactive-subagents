@@ -78,7 +78,7 @@ export default function (pi: ExtensionAPI) {
     // Set agent identity in the status bar — always visible
     const label = subagentAgent || subagentName;
     if (label) {
-      ctx.ui.setStatus("subagent", `subagent: ${label}`);
+      ctx.ui.setStatus("subagent", `{subagent: ${label}}`);
     }
 
     renderWidget(ctx, null);
