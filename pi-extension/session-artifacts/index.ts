@@ -16,6 +16,10 @@ export default function (pi: ExtensionAPI) {
       "Write a session-scoped artifact file (plan, context, research, notes, etc.). " +
       "Files are stored under ~/.pi/history/<project>/artifacts/<session-id>/. " +
       "Use this instead of writing pi working files directly.",
+    promptSnippet:
+      "Write a session-scoped artifact file (plan, context, research, notes, etc.). " +
+      "Files are stored under ~/.pi/history/<project>/artifacts/<session-id>/. " +
+      "Use this instead of writing pi working files directly.",
     promptGuidelines: [
       "Use write_artifact for any pi working file: plans, scout context, research notes, reviews, or other session artifacts.",
       "The name param can include subdirectories (e.g. 'context/auth-flow.md').",
@@ -114,6 +118,10 @@ export default function (pi: ExtensionAPI) {
     name: "read_artifact",
     label: "Read Artifact",
     description:
+      "Read a session-scoped artifact file by name (e.g. 'plans/my-plan.md', 'context/auth.md'). " +
+      "Searches the current session first, then other sessions for the same project. " +
+      "Use this to read artifacts written by sub-agents or previous sessions.",
+    promptSnippet:
       "Read a session-scoped artifact file by name (e.g. 'plans/my-plan.md', 'context/auth.md'). " +
       "Searches the current session first, then other sessions for the same project. " +
       "Use this to read artifacts written by sub-agents or previous sessions.",

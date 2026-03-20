@@ -404,6 +404,10 @@ export default function subagentsExtension(pi: ExtensionAPI) {
       "Spawn a sub-agent in a dedicated terminal multiplexer pane with shared session context. " +
       "The sub-agent branches from the current session, works independently (interactive or autonomous), " +
       "and returns results via a branch summary. Supports cmux, tmux, and zellij.",
+    promptSnippet:
+      "Spawn a sub-agent in a dedicated terminal multiplexer pane with shared session context. " +
+      "The sub-agent branches from the current session, works independently (interactive or autonomous), " +
+      "and returns results via a branch summary. Supports cmux, tmux, and zellij.",
     parameters: SubagentParams,
 
     async execute(_toolCallId, params, signal, onUpdate, ctx) {
@@ -608,6 +612,10 @@ export default function subagentsExtension(pi: ExtensionAPI) {
     name: "parallel_subagents",
     label: "Parallel Subagents",
     description:
+      "Run multiple autonomous sub-agents concurrently. Each agent spawns in its own multiplexer pane " +
+      "and runs independently. Results stream in as each agent completes so you do not have to wait for all of them. " +
+      "Use for independent tasks like scouting different parts of a codebase, parallel research, or non-overlapping work.",
+    promptSnippet:
       "Run multiple autonomous sub-agents concurrently. Each agent spawns in its own multiplexer pane " +
       "and runs independently. Results stream in as each agent completes so you do not have to wait for all of them. " +
       "Use for independent tasks like scouting different parts of a codebase, parallel research, or non-overlapping work.",
@@ -841,6 +849,10 @@ export default function subagentsExtension(pi: ExtensionAPI) {
       "List all available subagent definitions. " +
       "Scans project-local .pi/agents/ and global ~/.pi/agent/agents/. " +
       "Project-local agents override global ones with the same name.",
+    promptSnippet:
+      "List all available subagent definitions. " +
+      "Scans project-local .pi/agents/ and global ~/.pi/agent/agents/. " +
+      "Project-local agents override global ones with the same name.",
     parameters: Type.Object({}),
 
     async execute() {
@@ -917,6 +929,9 @@ export default function subagentsExtension(pi: ExtensionAPI) {
     description:
       "Update the current tab/window and workspace/session title. Use to show progress during multi-phase workflows " +
       "(e.g. planning, executing todos, reviewing). Keep titles short and informative.",
+    promptSnippet:
+      "Update the current tab/window and workspace/session title. Use to show progress during multi-phase workflows " +
+      "(e.g. planning, executing todos, reviewing). Keep titles short and informative.",
     parameters: Type.Object({
       title: Type.String({ description: "New tab title (also applied to workspace/session when supported)" }),
     }),
@@ -946,6 +961,10 @@ export default function subagentsExtension(pi: ExtensionAPI) {
     name: "subagent_resume",
     label: "Resume Subagent",
     description:
+      "Resume a previous sub-agent session in a new multiplexer pane. " +
+      "Opens an interactive session from the given session file path. " +
+      "Use when a sub-agent was cancelled or needs follow-up work.",
+    promptSnippet:
       "Resume a previous sub-agent session in a new multiplexer pane. " +
       "Opens an interactive session from the given session file path. " +
       "Use when a sub-agent was cancelled or needs follow-up work.",
