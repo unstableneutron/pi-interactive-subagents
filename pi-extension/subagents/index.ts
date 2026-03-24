@@ -712,7 +712,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
       }),
     }),
 
-    async execute(_toolCallId, params, signal, onUpdate, ctx) {
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       // Prevent self-spawning (e.g. planner spawning another planner)
       const currentAgent = process.env.PI_SUBAGENT_AGENT;
       if (currentAgent) {
@@ -736,45 +736,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
         };
       }
 
-      const startTime = Date.now();
       const total = params.agents.length;
-      const completed: SubagentResult[] = [];
-      const agentStatus = new Map<string, { elapsed: string; entries?: number; bytes?: number; done: boolean }>();
-
-      // Initialize status for all agents
-      for (const a of params.agents) {
-        agentStatus.set(a.name, { elapsed: "0s", done: false });
-      }
-
-      const emitProgress = () => {
-        const lines: string[] = [];
-        for (const a of params.agents) {
-          const status = agentStatus.get(a.name)!;
-          if (status.done) {
-            const result = completed.find((r) => r.name === a.name);
-            const icon = result && result.exitCode === 0 ? "✓" : "✗";
-            lines.push(`${icon} ${a.name} — done (${formatElapsed(result?.elapsed ?? 0)})`);
-          } else {
-            const parts = [status.elapsed];
-            if (status.entries != null && status.bytes != null) {
-              parts.push(`${status.entries} msgs (${formatBytes(status.bytes)})`);
-            }
-            lines.push(`⟳ ${a.name} — ${parts.join(" · ")}`);
-          }
-        }
-
-        onUpdate?.({
-          content: [{ type: "text", text: lines.join("\n") }],
-          details: {
-            startTime,
-            total,
-            completed: completed.length,
-            agents: Object.fromEntries(agentStatus),
-          },
-        });
-      };
-
-      emitProgress();
 
       // Pre-create all surfaces with a tiled layout:
       // First agent splits right from the orchestrator (side-by-side),
@@ -783,10 +745,8 @@ export default function subagentsExtension(pi: ExtensionAPI) {
       for (let i = 0; i < params.agents.length; i++) {
         const name = params.agents[i].name;
         if (i === 0) {
-          // First agent: split right from the orchestrator
           surfaces.push(createSurfaceSplit(name, "right"));
         } else {
-          // Subsequent agents: split down from the previous agent's surface
           surfaces.push(createSurfaceSplit(name, "down", surfaces[i - 1]));
         }
       }
@@ -798,59 +758,55 @@ export default function subagentsExtension(pi: ExtensionAPI) {
       // from all locking onto the same "newest" file during progress polling.
       const claimedFiles = new Set<string>();
 
-      // Run all agents concurrently
-      const effectiveSignal = signal ?? new AbortController().signal;
-      const promises = params.agents.map(async (agentParams, i) => {
-        const fullParams = { ...agentParams, fork: false as const };
+      // Launch all agents and start fire-and-forget watchers
+      const launched: Array<{ id: string; name: string }> = [];
+      for (let i = 0; i < params.agents.length; i++) {
+        const agentParams = { ...params.agents[i], fork: false as const };
+        const running = await launchSubagent(agentParams, ctx, { surface: surfaces[i], claimedFiles });
+        launched.push({ id: running.id, name: running.name });
 
-        const result = await runSubagent(fullParams, ctx, effectiveSignal, (info) => {
-          agentStatus.set(agentParams.name, {
-            elapsed: info.elapsed,
-            entries: info.entries,
-            bytes: info.bytes,
-            done: false,
-          });
-          emitProgress();
-        }, { surface: surfaces[i], claimedFiles });
+        // Fire-and-forget watcher — each steers its result independently
+        const watcherAbort = new AbortController();
+        running.abortController = watcherAbort;
 
-        // Mark as done and emit progress immediately
-        agentStatus.set(agentParams.name, { elapsed: formatElapsed(result.elapsed), done: true });
-        completed.push(result);
-        emitProgress();
+        watchSubagent(running, watcherAbort.signal).then((result) => {
+          const sessionRef = result.sessionFile
+            ? `\n\nSession: ${result.sessionFile}\nResume: pi --session ${result.sessionFile}`
+            : "";
+          const content = result.exitCode !== 0
+            ? `Sub-agent "${running.name}" failed (exit code ${result.exitCode}).\n\n${result.summary}${sessionRef}`
+            : `Sub-agent "${running.name}" completed (${formatElapsed(result.elapsed)}).\n\n${result.summary}${sessionRef}`;
 
-        return result;
-      });
+          pi.sendMessage({
+            customType: "subagent_result",
+            content,
+            display: true,
+            details: {
+              name: running.name,
+              task: running.task,
+              agent: running.agent,
+              exitCode: result.exitCode,
+              elapsed: result.elapsed,
+              sessionFile: result.sessionFile,
+            },
+          }, { triggerTurn: true, deliverAs: "steer" });
+        }).catch((err) => {
+          pi.sendMessage({
+            customType: "subagent_result",
+            content: `Sub-agent "${running.name}" error: ${err?.message ?? String(err)}`,
+            display: true,
+            details: { name: running.name, task: running.task, error: err?.message },
+          }, { triggerTurn: true, deliverAs: "steer" });
+        });
+      }
 
-      const results = await Promise.all(promises);
-      const totalElapsed = Math.floor((Date.now() - startTime) / 1000);
-
-      // Build combined result text
-      const sections = results.map((r) => {
-        const icon = r.exitCode === 0 ? "✓" : "✗";
-        const sessionRef = r.sessionFile
-          ? `\nSession: ${r.sessionFile}\nResume: pi --session ${r.sessionFile}`
-          : "";
-        return `## ${icon} ${r.name} (${formatElapsed(r.elapsed)})\n\n${r.summary}${sessionRef}`;
-      });
-
-      const succeeded = results.filter((r) => r.exitCode === 0).length;
-      const failed = results.filter((r) => r.exitCode !== 0).length;
-      const header = `${succeeded}/${total} succeeded` + (failed > 0 ? `, ${failed} failed` : "") + ` in ${formatElapsed(totalElapsed)}`;
-
+      // Return immediately
       return {
-        content: [{ type: "text", text: `${header}\n\n${sections.join("\n\n")}` }],
+        content: [{ type: "text", text: `${total} sub-agent${total !== 1 ? "s" : ""} started.` }],
         details: {
           total,
-          succeeded,
-          failed,
-          elapsed: totalElapsed,
-          results: results.map((r) => ({
-            name: r.name,
-            task: r.task,
-            exitCode: r.exitCode,
-            elapsed: r.elapsed,
-            sessionFile: r.sessionFile,
-          })),
+          agents: launched,
+          status: "started",
         },
       };
     },
@@ -872,69 +828,26 @@ export default function subagentsExtension(pi: ExtensionAPI) {
       return new Text(text, 0, 0);
     },
 
-    renderResult(result, { expanded, isPartial }, theme) {
+    renderResult(result, _opts, theme) {
       const details = result.details as any;
+      const total = details?.total ?? 0;
+      const agents: Array<{ id: string; name: string }> = details?.agents ?? [];
 
-      if (isPartial) {
-        const total: number = details?.total ?? 0;
-        const completedCount: number = details?.completed ?? 0;
-        const startTime: number | undefined = details?.startTime;
-        const elapsed = startTime
-          ? formatElapsed(Math.floor((Date.now() - startTime) / 1000))
-          : "…";
-        const agents: Record<string, { elapsed: string; entries?: number; bytes?: number; done: boolean }> =
-          details?.agents ?? {};
+      if (details?.status === "started") {
+        let text = theme.fg("accent", "▸") + " " +
+          theme.fg("toolTitle", theme.bold("Parallel Subagents")) +
+          theme.fg("dim", ` — ${total} started`);
 
-        let text = theme.fg("dim", `${completedCount}/${total} done · ${elapsed} elapsed`);
-
-        for (const [name, status] of Object.entries(agents)) {
-          if (status.done) {
-            text += "\n  " + theme.fg("success", "✓") + " " + theme.fg("toolTitle", name) +
-              theme.fg("dim", ` — done`);
-          } else {
-            const parts = [status.elapsed];
-            if (status.entries != null && status.bytes != null) {
-              parts.push(`${status.entries} msgs (${formatBytes(status.bytes)})`);
-            } else {
-              parts.push("loading…");
-            }
-            text += "\n  " + theme.fg("dim", "⟳") + " " + theme.fg("toolTitle", name) +
-              theme.fg("dim", ` — ${parts.join(" · ")}`);
-          }
+        for (const a of agents) {
+          text += "\n  ▸ " + theme.fg("toolOutput", a.name);
         }
 
         return new Text(text, 0, 0);
       }
 
-      // Completed
-      const total: number = details?.total ?? 0;
-      const succeeded: number = details?.succeeded ?? 0;
-      const failed: number = details?.failed ?? 0;
-      const elapsed: number = details?.elapsed ?? 0;
-      const results: any[] = details?.results ?? [];
-
-      const statusIcon = failed === 0 ? theme.fg("success", "✓") : theme.fg("warning", "⚠");
-      let text = statusIcon + " " +
-        theme.fg("toolTitle", theme.bold("Parallel Subagents")) +
-        theme.fg("dim", ` — ${succeeded}/${total} succeeded (${formatElapsed(elapsed)})`);
-
-      if (expanded) {
-        const summaryText = typeof result.content?.[0]?.text === "string" ? result.content[0].text : "";
-        // Skip the header line, show the rest
-        const body = summaryText.split("\n").slice(1).join("\n").trim();
-        if (body) {
-          text += "\n" + theme.fg("text", body);
-        }
-      } else {
-        for (const r of results) {
-          const icon = r.exitCode === 0 ? theme.fg("success", "✓") : theme.fg("error", "✗");
-          text += "\n  " + icon + " " + theme.fg("toolTitle", r.name) +
-            theme.fg("dim", ` (${formatElapsed(r.elapsed)})`);
-        }
-        text += " " + theme.fg("muted", `(${keyHint("app.tools.expand", "to expand")})`);
-      }
-
-      return new Text(text, 0, 0);
+      // Fallback
+      const summaryText = typeof result.content?.[0]?.text === "string" ? result.content[0].text : "";
+      return new Text(theme.fg("dim", summaryText), 0, 0);
     },
   });
 
