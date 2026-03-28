@@ -1,8 +1,6 @@
 import { execSync, execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
-import { existsSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename } from "node:path";
 
 const execFileAsync = promisify(execFile);
 
@@ -125,6 +123,71 @@ function zellijPaneId(surface: string): string {
   return surface.startsWith("pane:") ? surface.slice("pane:".length) : surface;
 }
 
+export function zellijPaneTargetArgs(surface: string): string[] {
+  return ["--pane-id", zellijPaneId(surface)];
+}
+
+export function parseZellijTabId(output: string): string {
+  const tabId = output.trim();
+  if (!/^\d+$/.test(tabId)) {
+    throw new Error(`Unexpected zellij tab id: ${tabId || "(empty)"}`);
+  }
+  return tabId;
+}
+
+export function parseZellijPaneId(output: string): string {
+  const paneMatch = output.trim().match(/^(?:terminal_|plugin_)?(\d+)$/);
+  const paneId = paneMatch?.[1];
+  if (!paneId) {
+    throw new Error(`Unexpected zellij pane id: ${output.trim() || "(empty)"}`);
+  }
+  return paneId;
+}
+
+interface ZellijPaneListEntry {
+  id: number | string;
+  is_plugin?: boolean;
+  is_focused?: boolean;
+  tab_id?: number | string;
+}
+
+interface ZellijTabListEntry {
+  tab_id?: number | string;
+  selectable_tiled_panes_count?: number;
+  selectable_floating_panes_count?: number;
+}
+
+export function findZellijPaneIdForTab(listPanesJson: string, tabId: string): string | null {
+  const panes = JSON.parse(listPanesJson) as ZellijPaneListEntry[];
+  const terminalPanes = panes.filter(
+    (pane) => String(pane.tab_id) === tabId && pane.is_plugin !== true,
+  );
+  const selectedPane = terminalPanes.find((pane) => pane.is_focused) ?? terminalPanes[0];
+  return selectedPane ? String(selectedPane.id) : null;
+}
+
+export function findZellijTabIdForPane(listPanesJson: string, paneId: string): string | null {
+  const panes = JSON.parse(listPanesJson) as ZellijPaneListEntry[];
+  const pane = panes.find((entry) => String(entry.id) === paneId);
+  return pane?.tab_id != null ? String(pane.tab_id) : null;
+}
+
+export function shouldCloseZellijTab(listTabsJson: string, tabId: string): boolean {
+  const tabs = JSON.parse(listTabsJson) as ZellijTabListEntry[];
+  const tab = tabs.find((entry) => String(entry.tab_id) === tabId);
+  if (!tab) return false;
+  const tiled = tab.selectable_tiled_panes_count ?? 0;
+  const floating = tab.selectable_floating_panes_count ?? 0;
+  return tiled + floating <= 1;
+}
+
+export function buildZellijCommandInputActions(surface: string, command: string): string[][] {
+  return [
+    ["paste", ...zellijPaneTargetArgs(surface), command],
+    ["send-keys", ...zellijPaneTargetArgs(surface), "Enter"],
+  ];
+}
+
 function zellijEnv(surface?: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
   if (surface) {
@@ -133,16 +196,20 @@ function zellijEnv(surface?: string): NodeJS.ProcessEnv {
   return env;
 }
 
-function waitForFile(path: string, timeoutMs = 5000): string {
+function waitForZellijPaneIdForTab(tabId: string, timeoutMs = 5000): string {
   const sleeper = new Int32Array(new SharedArrayBuffer(4));
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
-    if (existsSync(path)) {
-      return readFileSync(path, "utf8").trim();
+    try {
+      const panesJson = zellijActionSync(["list-panes", "--json", "--tab", "--state"]);
+      const paneId = findZellijPaneIdForTab(panesJson, tabId);
+      if (paneId) return paneId;
+    } catch {
+      // Ignore transient session-state parse/availability errors while the tab spins up.
     }
     Atomics.wait(sleeper, 0, 0, 20);
   }
-  throw new Error(`Timed out waiting for zellij pane id file: ${path}`);
+  throw new Error(`Timed out waiting for zellij pane in tab ${tabId}`);
 }
 
 function zellijActionSync(args: string[], surface?: string): string {
@@ -161,11 +228,31 @@ async function zellijActionAsync(args: string[], surface?: string): Promise<stri
 }
 
 /**
- * Create a new terminal pane as a right split and set its title.
+ * Create a new terminal surface and set its title.
  * Returns an identifier (`surface:42` in cmux, `%12` in tmux, `pane:7` in zellij).
+ *
+ * Zellij defaults to a new tab so each subagent gets dedicated tab isolation.
  */
 export function createSurface(name: string): string {
-  return createSurfaceSplit(name, "right");
+  const backend = requireMuxBackend();
+
+  if (backend !== "zellij") {
+    return createSurfaceSplit(name, "right");
+  }
+
+  const tabId = parseZellijTabId(
+    zellijActionSync(["new-tab", "--name", name, "--cwd", process.cwd()]),
+  );
+  const paneId = waitForZellijPaneIdForTab(tabId);
+  const surface = `pane:${paneId}`;
+
+  try {
+    zellijActionSync(["rename-pane", ...zellijPaneTargetArgs(surface), name]);
+  } catch {
+    // Optional.
+  }
+
+  return surface;
 }
 
 /**
@@ -225,37 +312,17 @@ export function createSurfaceSplit(
 
   // zellij
   const directionArg = direction === "left" || direction === "right" ? "right" : "down";
-  const tokenPath = join(
-    tmpdir(),
-    `pi-subagent-zellij-pane-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`,
-  );
   const args = ["new-pane", "--direction", directionArg, "--name", name, "--cwd", process.cwd()];
 
+  let paneOutput: string;
   try {
-    zellijActionSync(args, fromSurface);
+    paneOutput = zellijActionSync(args, fromSurface);
   } catch {
     if (!fromSurface) throw new Error("Failed to create zellij pane");
-    zellijActionSync(args);
+    paneOutput = zellijActionSync(args);
   }
 
-  // IMPORTANT: do not pass a long-running command to `new-pane`.
-  // zellij keeps the `action new-pane -- <cmd>` process attached until <cmd>
-  // exits. If <cmd> is an interactive shell, the parent call hangs forever.
-  // Instead, create a normal shell pane first, then ask the focused pane
-  // to print its own $ZELLIJ_PANE_ID into a temp file.
-  const captureIdCmd = `echo "$ZELLIJ_PANE_ID" > ${shellEscape(tokenPath)}`;
-  zellijActionSync(["write-chars", captureIdCmd]);
-  zellijActionSync(["write", "13"]);
-
-  const paneId = waitForFile(tokenPath);
-  try {
-    rmSync(tokenPath, { force: true });
-  } catch {}
-
-  if (!paneId || !/^\d+$/.test(paneId)) {
-    throw new Error(`Unexpected zellij pane id: ${paneId || "(empty)"}`);
-  }
-
+  const paneId = parseZellijPaneId(paneOutput);
   const surface = `pane:${paneId}`;
 
   if (direction === "left" || direction === "up") {
@@ -267,7 +334,7 @@ export function createSurfaceSplit(
   }
 
   try {
-    zellijActionSync(["rename-pane", name], surface);
+    zellijActionSync(["rename-pane", ...zellijPaneTargetArgs(surface), name]);
   } catch {
     // Optional.
   }
@@ -362,8 +429,9 @@ export function sendCommand(surface: string, command: string): void {
     return;
   }
 
-  zellijActionSync(["write-chars", command], surface);
-  zellijActionSync(["write", "13"], surface);
+  for (const actionArgs of buildZellijCommandInputActions(surface, command)) {
+    zellijActionSync(actionArgs);
+  }
 }
 
 /**
@@ -452,7 +520,22 @@ export function closeSurface(surface: string): void {
     return;
   }
 
-  zellijActionSync(["close-pane"], surface);
+  try {
+    const paneId = zellijPaneId(surface);
+    const panesJson = zellijActionSync(["list-panes", "--json", "--tab", "--state"]);
+    const tabId = findZellijTabIdForPane(panesJson, paneId);
+    if (tabId) {
+      const tabsJson = zellijActionSync(["list-tabs", "--json"]);
+      if (shouldCloseZellijTab(tabsJson, tabId)) {
+        zellijActionSync(["close-tab", "--tab-id", tabId]);
+        return;
+      }
+    }
+  } catch {
+    // Fall back to closing just the pane when tab metadata is unavailable.
+  }
+
+  zellijActionSync(["close-pane", ...zellijPaneTargetArgs(surface)]);
 }
 
 /**

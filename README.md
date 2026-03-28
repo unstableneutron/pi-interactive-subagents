@@ -1,12 +1,12 @@
 # pi-interactive-subagents
 
-Async subagents for [pi](https://github.com/badlogic/pi-mono) — spawn, orchestrate, and manage sub-agent sessions in multiplexer panes. **Fully non-blocking** — the main agent keeps working while subagents run in the background.
+Async subagents for [pi](https://github.com/badlogic/pi-mono) — spawn, orchestrate, and manage sub-agent sessions in terminal multiplexers. **Fully non-blocking** — the main agent keeps working while subagents run in the background.
 
 https://github.com/user-attachments/assets/30adb156-cfb4-4c47-84ca-dd4aa80cba9f
 
 ## How It Works
 
-Call `subagent()` and it **returns immediately**. The sub-agent runs in its own terminal pane. A live widget above the input shows all running agents with elapsed time and progress. When a sub-agent finishes, its result is **steered back** into the main session as an async notification — triggering a new turn so the agent can process it.
+Call `subagent()` and it **returns immediately**. The sub-agent runs in its own terminal surface (a pane on cmux/tmux, a dedicated tab on zellij). A live widget above the input shows all running agents with elapsed time and progress. When a sub-agent finishes, its result is **steered back** into the main session as an async notification — triggering a new turn so the agent can process it.
 
 ```
 ╭─ Subagents ──────────────────────── 2 running ─╮
@@ -46,6 +46,10 @@ zellij --session pi   # then run: pi
 ```
 
 Optional: set `PI_SUBAGENT_MUX=cmux|tmux|zellij` to force a specific backend.
+
+Notes:
+- cmux/tmux subagents open in split panes by default
+- zellij subagents open in a new tab by default
 
 ## What's Included
 
@@ -91,7 +95,7 @@ Agent discovery follows priority: **project-local** (`.pi/agents/`) > **global**
 
 ```
 1. Agent calls subagent()         → returns immediately ("started")
-2. Sub-agent runs in mux pane     → widget shows live progress
+2. Sub-agent runs in mux surface  → widget shows live progress
 3. User keeps chatting             → main session fully interactive
 4. Sub-agent finishes              → result steered back as interrupt
 5. Main agent processes result     → continues with new context

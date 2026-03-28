@@ -14,7 +14,17 @@ import {
   mergeNewEntries,
 } from "../pi-extension/subagents/session.ts";
 
-import { shellEscape, isCmuxAvailable } from "../pi-extension/subagents/cmux.ts";
+import {
+  shellEscape,
+  isCmuxAvailable,
+  parseZellijTabId,
+  parseZellijPaneId,
+  findZellijPaneIdForTab,
+  findZellijTabIdForPane,
+  shouldCloseZellijTab,
+  zellijPaneTargetArgs,
+  buildZellijCommandInputActions,
+} from "../pi-extension/subagents/cmux.ts";
 
 // --- Helpers ---
 
@@ -275,6 +285,105 @@ describe("cmux.ts", () => {
       // Can't easily mock env in node:test, just verify it returns a boolean
       const result = isCmuxAvailable();
       assert.equal(typeof result, "boolean");
+    });
+  });
+
+  describe("zellij helpers", () => {
+    describe("parseZellijTabId", () => {
+      it("parses a numeric tab id from stdout", () => {
+        assert.equal(parseZellijTabId("17\n"), "17");
+      });
+
+      it("throws for unexpected output", () => {
+        assert.throws(() => parseZellijTabId("terminal_3\n"), /Unexpected zellij tab id/);
+      });
+    });
+
+    describe("parseZellijPaneId", () => {
+      it("parses terminal-style pane ids from stdout", () => {
+        assert.equal(parseZellijPaneId("terminal_9\n"), "9");
+      });
+
+      it("throws for unexpected pane output", () => {
+        assert.throws(() => parseZellijPaneId("pane:9\n"), /Unexpected zellij pane id/);
+      });
+    });
+
+    describe("findZellijPaneIdForTab", () => {
+      it("prefers the focused terminal pane in the created tab", () => {
+        const panesJson = JSON.stringify([
+          { id: 1, is_plugin: true, tab_id: 7, is_focused: false },
+          { id: 2, is_plugin: false, tab_id: 7, is_focused: false },
+          { id: 3, is_plugin: false, tab_id: 7, is_focused: true },
+          { id: 4, is_plugin: false, tab_id: 8, is_focused: true },
+        ]);
+
+        assert.equal(findZellijPaneIdForTab(panesJson, "7"), "3");
+      });
+
+      it("falls back to the first terminal pane when none are focused", () => {
+        const panesJson = JSON.stringify([
+          { id: 11, is_plugin: true, tab_id: 5, is_focused: false },
+          { id: 12, is_plugin: false, tab_id: 5, is_focused: false },
+          { id: 13, is_plugin: false, tab_id: 5, is_focused: false },
+        ]);
+
+        assert.equal(findZellijPaneIdForTab(panesJson, "5"), "12");
+      });
+
+      it("returns null when the tab has no terminal panes", () => {
+        const panesJson = JSON.stringify([{ id: 21, is_plugin: true, tab_id: 9 }]);
+        assert.equal(findZellijPaneIdForTab(panesJson, "9"), null);
+      });
+    });
+
+    describe("findZellijTabIdForPane", () => {
+      it("finds the owning tab id for a pane", () => {
+        const panesJson = JSON.stringify([
+          { id: 1, is_plugin: false, tab_id: 3 },
+          { id: 2, is_plugin: false, tab_id: 4 },
+        ]);
+
+        assert.equal(findZellijTabIdForPane(panesJson, "2"), "4");
+      });
+
+      it("returns null when the pane is missing", () => {
+        const panesJson = JSON.stringify([{ id: 1, is_plugin: false, tab_id: 3 }]);
+        assert.equal(findZellijTabIdForPane(panesJson, "9"), null);
+      });
+    });
+
+    describe("shouldCloseZellijTab", () => {
+      it("closes dedicated single-pane tabs instead of leaving them empty", () => {
+        const tabsJson = JSON.stringify([
+          { tab_id: 3, selectable_tiled_panes_count: 1, selectable_floating_panes_count: 0 },
+        ]);
+
+        assert.equal(shouldCloseZellijTab(tabsJson, "3"), true);
+      });
+
+      it("keeps shared tabs open when multiple panes remain", () => {
+        const tabsJson = JSON.stringify([
+          { tab_id: 3, selectable_tiled_panes_count: 2, selectable_floating_panes_count: 0 },
+        ]);
+
+        assert.equal(shouldCloseZellijTab(tabsJson, "3"), false);
+      });
+    });
+
+    describe("zellijPaneTargetArgs", () => {
+      it("builds pane-id targeting flags from a pane surface", () => {
+        assert.deepEqual(zellijPaneTargetArgs("pane:42"), ["--pane-id", "42"]);
+      });
+    });
+
+    describe("buildZellijCommandInputActions", () => {
+      it("uses bracketed paste plus Enter for command injection", () => {
+        assert.deepEqual(buildZellijCommandInputActions("pane:42", "echo hello"), [
+          ["paste", "--pane-id", "42", "echo hello"],
+          ["send-keys", "--pane-id", "42", "Enter"],
+        ]);
+      });
     });
   });
 });
